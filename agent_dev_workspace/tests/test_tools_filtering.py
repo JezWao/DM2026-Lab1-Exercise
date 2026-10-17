@@ -1,0 +1,119 @@
+"""
+tests/test_tools_filtering.py - Unit tests for tools_filtering.py using sample_fixture.csv
+"""
+
+import pytest
+import numpy as np
+from agent_pipeline.session_state import SessionState
+from agent_pipeline.workspace_loader import load_workspace_tools
+from tools_dtm import make_tools as make_dtm_tools
+from tools_filtering import make_tools as make_filtering_tools
+
+
+def setup_session_and_dtm():
+    """Helper function to initialize state and run build_dtm_tool on sample_fixture.csv."""
+    session = SessionState()
+    premade_tools, _ = load_workspace_tools("premade_tools", session)
+    load_dataset_tool = next(t for t in premade_tools if t.name == "load_dataset_tool")
+
+    load_dataset_tool.invoke({
+        "file_path": "agent_dev/sample_fixture.csv",
+        "text_column": "text",
+        "label_column": "label",
+    })
+
+    dtm_tools = make_dtm_tools(session)
+    build_dtm_tool = next(t for t in dtm_tools if t.name == "build_dtm_tool")
+    build_dtm_tool.invoke({})
+
+    filtering_tools = make_filtering_tools(session)
+    return session, filtering_tools
+
+
+def test_variance_filter_tool():
+    """
+    Tests variance_filter_tool against known answer #5 in TEST_FIXTURE.md.
+    Variances: alpha: 1.1875, always: 0.109375, beta: 0.234375, delta: 0.25, gamma: 1.109375
+    Threshold 0.15 removes 'always' and keeps the rest.
+    """
+    session, tools = setup_session_and_dtm()
+    variance_filter_tool = next(t for t in tools if t.name == "variance_filter_tool")
+
+    res = variance_filter_tool.invoke({"threshold": 0.15})
+
+    assert res["status"] == "success"
+    assert res["threshold"] == 0.15
+
+    expected_vars = {
+        "alpha": 1.1875,
+        "always": 0.109375,
+        "beta": 0.234375,
+        "delta": 0.25,
+        "gamma": 1.109375,
+    }
+
+    for term, expected_v in expected_vars.items():
+        assert np.isclose(res["variances"][term], expected_v, atol=1e-3)
+
+    assert "always" in res["removed_feature_names"]
+    assert set(res["kept_feature_names"]) == {"alpha", "beta", "delta", "gamma"}
+
+
+def test_pearson_filter_tool():
+    """
+    Tests pearson_filter_tool against known answer #6 in TEST_FIXTURE.md (target_class='catB').
+    Pearson r:
+    alpha: -0.6882
+    always: 0.3780
+    beta: -0.7746
+    delta: 1.0000
+    gamma: 0.8307
+    """
+    session, tools = setup_session_and_dtm()
+    pearson_filter_tool = next(t for t in tools if t.name == "pearson_filter_tool")
+
+    res = pearson_filter_tool.invoke({"target_class": "catB"})
+
+    assert res["status"] == "success"
+    assert res["target_class"] == "catB"
+
+    expected_r = {
+        "alpha": -0.6882,
+        "always": 0.3780,
+        "beta": -0.7746,
+        "delta": 1.0000,
+        "gamma": 0.8307,
+    }
+
+    for term, exp_r in expected_r.items():
+        assert np.isclose(res["correlations"][term], exp_r, atol=1e-3)
+
+
+def test_spearman_filter_tool():
+    """
+    Tests spearman_filter_tool against known answer #6 in TEST_FIXTURE.md (target_class='catB').
+    Spearman r:
+    alpha: -0.7500
+    always: 0.3780
+    beta: -0.7746
+    delta: 1.0000
+    gamma: 0.9363
+    """
+    session, tools = setup_session_and_dtm()
+    spearman_filter_tool = next(t for t in tools if t.name == "spearman_filter_tool")
+
+    res = spearman_filter_tool.invoke({"target_class": "catB"})
+
+    assert res["status"] == "success"
+    assert res["target_class"] == "catB"
+
+    expected_r = {
+        "alpha": -0.7500,
+        "always": 0.3780,
+        "beta": -0.7746,
+        "delta": 1.0000,
+        "gamma": 0.9363,
+    }
+
+    for term, exp_r in expected_r.items():
+        assert np.isclose(res["correlations"][term], exp_r, atol=1e-3)
